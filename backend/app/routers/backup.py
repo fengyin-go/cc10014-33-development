@@ -1,4 +1,5 @@
-"""数据备份接口：维护备份策略，覆盖提交校验、启用备份、停用备份等动作。"""
+"""数据备份接口：维护备份策略，覆盖提交校验、启用备份、停用备份等动作，
+以及数据快照生成、批量恢复演练、过期清理、备份清单与备份策略契约的完整链路。"""
 from __future__ import annotations
 
 from typing import Any
@@ -30,6 +31,22 @@ def list_entries(
     return PageResult(items=items, total=total, page=page, size=size)
 
 
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出数据备份清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "backup", "total": total, "items": items}
+
+
+@router.get("/contracts/{strategy_code}", response_model=dict)
+def get_contract(strategy_code: str) -> dict:
+    """读取备份策略契约：数据源与数据查询模块从这里读取同一恢复点。"""
+    contract = service.get_contract(strategy_code)
+    if contract is None:
+        raise HTTPException(status_code=404, detail=f"策略 {strategy_code} 尚未写入备份策略契约")
+    return contract
+
+
 @router.get("/{entry_id}", response_model=dict)
 def get_entry(entry_id: int) -> dict:
     """读取单条备份策略明细；不存在时给出可读的错误说明。"""
@@ -58,8 +75,64 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     return ActionResult(ok=True, message=message, entry=entry)
 
 
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出数据备份清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "backup", "total": total, "items": items}
+@router.post("/{entry_id}/snapshots", response_model=ActionResult)
+def generate_snapshot(entry_id: int, payload: EntryPayload) -> ActionResult:
+    """生成数据快照：校验快照完整性，同时写入备份清单与恢复演练记录，并同步备份策略契约。"""
+    manifest, message = service.generate_snapshot(entry_id, payload.values)
+    if manifest is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=manifest)
+
+
+@router.get("/{entry_id}/snapshots", response_model=dict)
+def list_snapshots(entry_id: int) -> dict:
+    """读取策略下的数据快照列表，供保留份数与完整性复核。"""
+    items, message = service.list_snapshots(entry_id)
+    if items is None:
+        raise HTTPException(status_code=404, detail=message)
+    return {"total": len(items), "items": items}
+
+
+@router.post("/{entry_id}/drills", response_model=ActionResult)
+def run_drill(entry_id: int, payload: EntryPayload) -> ActionResult:
+    """批量恢复演练：快照批量多选、整组校验、逐条记录演练结果。"""
+    summary, message = service.run_drill(entry_id, payload.values)
+    if summary is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=summary)
+
+
+@router.get("/{entry_id}/drills", response_model=dict)
+def list_drills(entry_id: int) -> dict:
+    """读取策略下的恢复演练记录，证明备份可恢复。"""
+    items, message = service.list_drills(entry_id)
+    if items is None:
+        raise HTTPException(status_code=404, detail=message)
+    return {"total": len(items), "items": items}
+
+
+@router.get("/{entry_id}/manifests", response_model=dict)
+def list_manifests(entry_id: int) -> dict:
+    """读取策略下的备份清单，复核可恢复点与保留边界。"""
+    items, message = service.list_manifests(entry_id)
+    if items is None:
+        raise HTTPException(status_code=404, detail=message)
+    return {"total": len(items), "items": items}
+
+
+@router.post("/{entry_id}/cleanup", response_model=ActionResult)
+def cleanup_expired(entry_id: int) -> ActionResult:
+    """过期清理：越过保留边界的旧快照先完成恢复演练再清理，演练未通过则保留。"""
+    summary, message = service.cleanup_expired(entry_id)
+    if summary is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=summary)
+
+
+@router.get("/{entry_id}/review", response_model=dict)
+def review(entry_id: int) -> dict:
+    """复核视图：从备份清单与数据快照复核快照完整性、恢复演练记录与保留份数。"""
+    result, message = service.review(entry_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=message)
+    return result

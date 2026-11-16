@@ -30,6 +30,15 @@ def list_entries(
     return PageResult(items=items, total=total, page=page, size=size)
 
 
+@router.get("/recovery-point/{strategy_code}", response_model=dict)
+def read_recovery_point(strategy_code: str) -> dict:
+    """读取备份策略契约中的恢复点，与数据源配置模块读取同一恢复点。"""
+    point = service.recovery_point(strategy_code)
+    if point is None:
+        raise HTTPException(status_code=404, detail=f"策略 {strategy_code} 尚未写入备份策略契约")
+    return {"读取模块": "query", **point}
+
+
 @router.get("/{entry_id}", response_model=dict)
 def get_entry(entry_id: int) -> dict:
     """读取单条查询定义明细；不存在时给出可读的错误说明。"""

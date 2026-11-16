@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.backup import read_recovery_point
 from app.store import store
 
 MODULE = "query"
@@ -59,3 +60,7 @@ class QueryService:
         entry["pending"] = target != STATUS_ORDER[-1]
         entry["abnormal"] = action in NEGATIVE_ACTIONS
         return entry, f"查询定义已{action}"
+
+    def recovery_point(self, strategy_code: str) -> dict[str, Any] | None:
+        """读取备份策略契约中的恢复点，与数据源配置模块保持同一口径。"""
+        return read_recovery_point(strategy_code)
